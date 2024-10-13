@@ -43,9 +43,7 @@ defmodule AshAuthentication.AddOn.Confirmation do
     end
 
     identities do
-      identity :email, [:email] do
-        eager_check_with MyApp.Accounts
-      end
+      identity :email, [:email]
     end
   end
   ```

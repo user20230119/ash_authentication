@@ -134,7 +134,37 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategy do
     """)
     |> generate_sign_in_and_registration(options)
     |> generate_reset(sender, options)
+    |> add_confirmation(options)
     |> Ash.Igniter.codegen("add_password_authentication")
+  end
+
+  defp add_confirmation(igniter, options) do
+    sender = Module.concat(options[:user], Senders.SendNewUserConfirmationEmail)
+
+    if options[:identity_field] == :email do
+      AshAuthentication.Igniter.add_new_add_on(
+        igniter,
+        options[:user],
+        :confirm_new_user,
+        :password,
+        """
+        confirmation :confirm_new_user do
+          monitor_fields [:email]
+          confirm_on_create? true
+          confirm_on_update? false
+
+          # If you want to allow users to update their email:
+          # confirm_on_update? true
+          # inhibit_updates? true
+
+          sender #{inspect(sender)}
+        end
+        """
+      )
+      |> create_new_user_confirmation_sender(sender, options)
+    else
+      igniter
+    end
   end
 
   defp generate_reset(igniter, sender, options) do
@@ -170,6 +200,8 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategy do
     )
     |> Ash.Resource.Igniter.add_new_action(options[:user], :reset_password, """
     update :reset_password do
+      require_atomic? false
+
       argument :reset_token, :string do
         allow_nil? false
         sensitive? true
@@ -243,6 +275,52 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategy do
         Click this link to reset your password:
 
         \#{url(~p"/password-reset/\#{token}")}
+        """)
+      end
+      '''
+    )
+  end
+
+  defp create_new_user_confirmation_sender(igniter, sender, options) do
+    web_module = Igniter.Libs.Phoenix.web_module(igniter)
+    {web_module_exists?, igniter} = Igniter.Project.Module.module_exists(igniter, web_module)
+
+    use_web_module =
+      if web_module_exists? do
+        "use #{inspect(web_module)}, :verified_routes"
+      end
+
+    example_domain = options[:user] |> Module.split() |> :lists.droplast() |> Module.concat()
+
+    real_example =
+      if web_module_exists? do
+        """
+        # Example of how you might send this email
+        # #{inspect(example_domain)}.Emails.send_password_reset_email(
+        #   user,
+        #   token
+        # )
+        """
+      end
+
+    Igniter.Project.Module.create_module(
+      igniter,
+      sender,
+      ~s'''
+      @moduledoc """
+      Sends a password reset email
+      """
+
+      use AshAuthentication.Sender
+      #{use_web_module}
+
+      @impl true
+      def send(_user, token, _) do
+        #{real_example}
+        IO.puts("""
+        Click this link to confirm your email:
+
+        \#{url(~p"/auth/user/confirm_new_user?\#{[token: token]}")}
         """)
       end
       '''

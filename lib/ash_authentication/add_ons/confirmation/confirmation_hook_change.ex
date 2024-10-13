@@ -35,7 +35,7 @@ defmodule AshAuthentication.AddOn.Confirmation.ConfirmationHookChange do
   """
 
   use Ash.Resource.Change
-  alias Ash.{Changeset, Resource.Change}
+  alias Ash.{Changeset, Error.Changes.InvalidChanges, Query, Resource.Change}
   alias AshAuthentication.{AddOn.Confirmation, Info}
   import Ash.Expr
 
@@ -141,11 +141,63 @@ defmodule AshAuthentication.AddOn.Confirmation.ConfirmationHookChange do
 
   defp maybe_inhibit_updates(%Changeset{} = changeset, strategy)
        when changeset.action_type == :update and strategy.inhibit_updates? do
-    strategy.monitor_fields
-    |> Enum.reduce(changeset, &Changeset.clear_change(&2, &1))
+    changeset
+    |> validate_identities(strategy)
+    |> case do
+      {:error, violated_identity} ->
+        Ash.Changeset.add_error(
+          changeset,
+          InvalidChanges.exception(
+            fields: violated_identity.keys,
+            message: "has already been taken"
+          )
+        )
+
+      changeset ->
+        Enum.reduce(strategy.monitor_fields, changeset, &Changeset.clear_change(&2, &1))
+    end
   end
 
   defp maybe_inhibit_updates(changeset, _strategy), do: changeset
+
+  defp validate_identities(changeset, strategy) do
+    strategy.monitor_fields
+    |> Enum.flat_map(fn field ->
+      changeset.resource
+      |> Ash.Resource.Info.identities()
+      |> Enum.filter(&(field in &1.keys))
+    end)
+    |> Enum.reduce_while(changeset, fn identity, changeset ->
+      non_attrs =
+        Enum.reject(identity.keys, &Ash.Resource.Info.attribute(changeset.resource, &1))
+
+      changeset = %{changeset | data: Ash.load!(changeset.data, non_attrs, lazy?: true)}
+
+      filter =
+        Enum.map(identity.keys, &{&1, Ash.Changeset.get_attribute(changeset, &1)})
+
+      has_nil? =
+      Enum.any?(filter, fn {_k, v} -> is_nil(v) end)
+
+      if (identity.nils_distinct? && has_nil?) ||
+           !exists?(changeset.resource, filter) do
+        {:cont, changeset}
+      else
+        {:halt, {:error, identity}}
+      end
+    end)
+  end
+
+  defp exists?(resource, filter) do
+    resource
+    |> Query.do_filter(filter)
+    |> Changeset.set_context(%{
+      private: %{
+        ash_authentication?: true
+      }
+    })
+    |> Ash.exists?()
+  end
 
   defp maybe_perform_confirmation(%Changeset{} = changeset, strategy, original_changeset) do
     changeset
