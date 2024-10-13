@@ -168,8 +168,6 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategyTest do
       + |    end
       + |
       + |    update :reset_password do
-      + |      require_atomic?(false)
-      + |
       + |      argument :reset_token, :string do
       + |        allow_nil?(false)
       + |        sensitive?(true)

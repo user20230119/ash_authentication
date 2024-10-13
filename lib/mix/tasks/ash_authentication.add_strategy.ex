@@ -200,8 +200,6 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategy do
     )
     |> Ash.Resource.Igniter.add_new_action(options[:user], :reset_password, """
     update :reset_password do
-      require_atomic? false
-
       argument :reset_token, :string do
         allow_nil? false
         sensitive? true

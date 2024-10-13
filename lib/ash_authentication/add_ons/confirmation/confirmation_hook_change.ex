@@ -76,6 +76,64 @@ defmodule AshAuthentication.AddOn.Confirmation.ConfirmationHookChange do
     end)
   end
 
+  @impl true
+  def atomic(changeset, opts, context) do
+    case Info.find_strategy(changeset, context, opts) do
+      {:ok, strategy} ->
+        atomic_confirmation(changeset, strategy)
+
+      :error ->
+        changeset
+    end
+  end
+
+  defp atomic_confirmation(changeset, strategy) do
+    auto_confirm? = changeset.action.name in strategy.auto_confirm_actions
+
+    if auto_confirm? do
+      {:atomic, %{strategy.confirmed_at_field => expr(now())}}
+    else
+      action_types =
+        if strategy.confirm_on_create? do
+          [:create]
+        else
+          []
+        end
+
+      action_types =
+        if strategy.confirm_on_update? do
+          action_types ++ [:update]
+        else
+          action_types
+        end
+
+      cond do
+        changeset.action.type not in action_types ->
+          {:ok, changeset}
+
+        changeset.action.name == strategy.confirm_action_name ->
+          {:ok, changeset}
+
+        !Enum.any?(strategy.monitor_fields, &Changeset.changing_attribute?(changeset, &1)) ->
+          {:ok, changeset}
+
+        identity = cant_atomically_inhibit_updates(changeset.resource, strategy) ->
+          {:not_atomic,
+           "The confirmation strategy `:#{strategy.name}` cannot inhibit updates atomically, because the identity `#{identity.name}` requires checking in advance if the fields have been taken."}
+
+        true ->
+          {:ok, maybe_perform_confirmation(changeset, strategy, changeset)}
+      end
+    end
+  end
+
+  defp cant_atomically_inhibit_updates(resource, strategy) do
+    strategy.inhibit_updates? &&
+      Enum.find(Ash.Resource.Info.identities(resource), fn identity ->
+        Enum.any?(strategy.monitor_fields, &(&1 in identity.keys))
+      end)
+  end
+
   defp before_action(changeset, strategy) do
     changeset
     |> not_confirm_action(strategy)
@@ -177,7 +235,7 @@ defmodule AshAuthentication.AddOn.Confirmation.ConfirmationHookChange do
         Enum.map(identity.keys, &{&1, Ash.Changeset.get_attribute(changeset, &1)})
 
       has_nil? =
-      Enum.any?(filter, fn {_k, v} -> is_nil(v) end)
+        Enum.any?(filter, fn {_k, v} -> is_nil(v) end)
 
       if (identity.nils_distinct? && has_nil?) ||
            !exists?(changeset.resource, filter) do
@@ -191,7 +249,7 @@ defmodule AshAuthentication.AddOn.Confirmation.ConfirmationHookChange do
   defp exists?(resource, filter) do
     resource
     |> Query.do_filter(filter)
-    |> Changeset.set_context(%{
+    |> Query.set_context(%{
       private: %{
         ash_authentication?: true
       }
