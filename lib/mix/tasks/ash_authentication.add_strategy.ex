@@ -152,11 +152,6 @@ defmodule Mix.Tasks.AshAuthentication.AddStrategy do
           monitor_fields [:email]
           confirm_on_create? true
           confirm_on_update? false
-
-          # If you want to allow users to update their email:
-          # confirm_on_update? true
-          # inhibit_updates? true
-
           sender #{inspect(sender)}
         end
         """

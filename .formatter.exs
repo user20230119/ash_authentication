@@ -49,6 +49,7 @@ spark_locals_without_parens = [
   magic_link: 1,
   magic_link: 2,
   monitor_fields: 1,
+  name: 1,
   nonce: 1,
   oauth2: 0,
   oauth2: 1,
